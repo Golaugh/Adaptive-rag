@@ -19,7 +19,6 @@ coloredlogs==15.0.1
 dataclasses-json==0.6.7
 decorator==5.2.1
 distro==1.9.0
-dotenv==0.9.9
 durationpy==0.10
 executing==2.2.0
 fastapi==0.116.1
