@@ -4,7 +4,6 @@
 project launch file
 """
 
-import os
 import sys
 import logging
 from pathlib import Path
@@ -12,8 +11,6 @@ from pathlib import Path
 # adding root directory to the path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
-
-from config.config import get_config_summary
 
 logging.basicConfig(
     level=logging.INFO,
@@ -29,7 +26,8 @@ def print_banner():
     [                          ]
     [ Planner System Activated ]
     [                          ]
-    ============================"""
+    ============================
+    """
     print(banner)
 
 
@@ -38,8 +36,10 @@ def check_dependencies():
     try:
         import langgraph
         logger.info("Dependency check passed")
+        return True
     except Exception as e:
         logger.error(f"Error, lack dependencies: {e}")
+        return False
 
 
 def main():
@@ -49,7 +49,8 @@ def main():
     if not check_dependencies():
         logger.error("Please try installing necessary dependencies.")
         sys.exit(1)
-
+    
+    from config.config import get_config_summary
     config = get_config_summary()
     logger.info("System config:")
     for key, value in config.items():
@@ -60,7 +61,7 @@ def main():
         from core.run_time import run_app
         run_app()
     except KeyboardInterrupt:
-        logger.info("System exit, goodbye!")
+        logger.info("System exits, goodbye!")
     except Exception as e:
         logger.error(f"System initialization failed: {e}")
         sys.exit(1)

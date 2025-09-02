@@ -9,13 +9,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# planner.db config
+# primary config
 DB_PATH = str(DATA_DIR / "planner.db")
-THREAD_ID = str(os.getenv("PLANNER_THREAD_ID", "default"))
-
+MODEL = os.environ("MODEL", "gpt-4o")
+SIDE_MODEL = os.environ("SIDE_MODEL", "gpt-4o-mini")
 
 def get_config_summary():
     return {
         "db_path": DB_PATH,
-        "thread_id": THREAD_ID
+        "model": MODEL,
+        "side_model": SIDE_MODEL
     }
