@@ -54,8 +54,15 @@ def advan_web_search(query: str) -> str:
 
     from zhihu_search import Zhihu
     from reddit_search import Reddit
+
+    zhihu = Zhihu(['81964408445','82586149604','82493740255','81348057992','81748398040','81531639383'])
+    zhihu_factor = zhihu.search()
+
+    reddit = Reddit('bot1', ['AskEngineers' ,'financialindependence' ,'Entrepreneur' ,'smallbusiness' , 'lifehacks'])
+    reddit_factor = reddit.search()
+
     return json.dumps({
         "query": query,
-        "snippet": f"[Stub] Pretend web results about: {query}",
-        "source": "web_stub"
+        "factors_from_zhihu": zhihu_factor,
+        "factors_from_reddit": reddit_factor,
     })
