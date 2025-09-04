@@ -15,7 +15,6 @@ from langgraph.graph.message import add_messages
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.types import Command
 
-# Setup & Config
 load_dotenv()
 logger = logging.getLogger(__name__)
 
@@ -23,14 +22,13 @@ logger = logging.getLogger(__name__)
 SERVER_ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = SERVER_ROOT / "data"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
-
-# SQLite file for both app tables + LangGraph checkpoint
 DB_PATH = str(DATA_DIR / "planner.db")
+DB_CHECKPOINTER_PATH = str(DATA_DIR / "checkpointer.db")
 
 from db import DBManager
-from core.nodes import (
+from nodes import (
     router_node, rewrite_node, analyze_node, planner_sys_node, 
-    record_node, summarize_node, llm_node, tool_node
+    record_node, should_summarize, summarize_node, llm_node, tool_node
 )
 
 DB = DBManager(DB_PATH)
@@ -43,36 +41,37 @@ class AgentState(TypedDict):
     thread_id: str
     hitl_collected: List[str]
     hitl_needed: str
-    hitl_round: int
+    hitl_rounds: int
 
 graph = StateGraph(AgentState)
-graph.add_node("router", router_node)
+graph.add_node("router_node", router_node)
 graph.add_node("rewrite", rewrite_node)
 graph.add_node("analizer", analyze_node)
 graph.add_node("planner_sys", planner_sys_node)
-graph.add_node("tools", tool_node)
-graph.add_node("recording", record_node) 
-graph.add_node("llm", llm_node)
+graph.add_node("record", record_node) 
+graph.add_node("should_summarize", should_summarize)
 graph.add_node("summarize", summarize_node)
+graph.add_node("llm", llm_node)
+graph.add_node("tools", tool_node)
 
-graph.add_edge(START, "router")
-graph.add_edge(START, "db_related")
+graph.add_edge(START, "should_summarize")
+graph.add_conditional_edges("should_summarize", should_summarize, {"summarize": "summarize", "router_node": "router_node"})
+graph.add_edge("summarize", "router_node")
 graph.add_conditional_edges("router", lambda s: s["route"], {
     "direct": "llm",
     "normal": "rewrite", 
-    "planner": "advanced_search"
+    "planner": "analizer"
 })
-graph.add_edge("llm", "recording")
-graph.add_edge("recording", "summarize")
-graph.add_edge("rewrite", "analizer")
-graph.add_edge("analizer", "planner_sys")
-graph.add_edge("planner_sys", "recording")
-graph.add_edge("advanced_search", "analizer")
-graph.add_edge("summarize", END)
+graph.add_edge("rewrite", "llm")
+graph.add_edge("tools", "llm")
+graph.add_edge("llm", "record")
 
-checkpointer = SqliteSaver.from_conn_string(DB_PATH)
+# Analyzer will use HITL, head to analizer again or planner_sys(when info is enough)
+graph.add_edge("planner_sys", "record")
+graph.add_edge("record", END)
+
+checkpointer = SqliteSaver.from_conn_string(DB_CHECKPOINTER_PATH)
 app = graph.compile(checkpointer=checkpointer)
-
 
 # Runtime (CLI)
 def run_app():

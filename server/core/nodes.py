@@ -22,11 +22,10 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DB_PATH = str(DATA_DIR / "planner.db")
 DB = DBManager(DB_PATH)
 
-SYSTEM_DIRECT = SystemMessage(content="You are a consice, helpful assistant. Use the conversation summary to maintain continuity.")
-LLM = ChatOpenAI(model=os.environ("MODEL"))
-SIDE_LLM = ChatOpenAI(model=os.environ("SIDE_MODEL"), temperature=0)
-SUMMARIZER = ChatOpenAI(model=os.environ("MODEL"))
-status = ("direct", "normal", "planner")
+LLM = ChatOpenAI(model=os.getenv("MODEL"))
+SIDE_LLM = ChatOpenAI(model=os.getenv("SIDE_MODEL"), temperature=0)
+SUMMARIZER = ChatOpenAI(model=os.getenv("MODEL"))
+STATUS = ("direct", "normal", "planner")
 MAX_ROUNDS = 3
 RECENT_K = 6
 KEEP_RECENT = 4
@@ -35,7 +34,6 @@ SUMMARIZE_AFTER = 8
 from utils.search import web_search
 TOOLS = [web_search]
 tool_node = ToolNode(TOOLS)
-LLM_DIRECT = LLM.bind_tools(TOOLS)
 
 
 class AgentState(TypedDict):
@@ -46,32 +44,27 @@ class AgentState(TypedDict):
     thread_id: str
     hitl_collected: List[str]
     hitl_needed: str
-    hitl_round: int
+    hitl_rounds: int
 
 
 def router_node(state: AgentState) -> dict:
     """change state['route'] attribute for the current state of messages"""
 
     last_user = next((m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), None)
-    sys = SystemMessage(content=("""Quickly categoize the latest message into one of three options below:
-                    direct: This is the meesage that is straightforward;
+    sys = SystemMessage(content=("""Quickly categorize the latest message into one of three options below:
+                    direct: This is the message that is straightforward;
                     normal: This is the message that may need to consider several factors or the message itself is too vague;
-                    planner: This is the meesage that requires detailed plan to achieve, and it involves multiple aspects of consideration.
+                    planner: This is the message that requires detailed plan to achieve, and it involves multiple aspects of consideration.
                     (Note: The output can only be one single word choosen from above)
                     """))
-    res = SIDE_LLM.invoke(sys + [last_user.content])
+    res = SIDE_LLM.invoke([sys, HumanMessage(content=last_user.content)])
 
-    while res.content not in status:
+    while res.content not in STATUS:
         logger.error(f"Wrong router response: {res}, trying again...")
-        res = SIDE_LLM.invoke(sys + [last_user.content])
+        res = SIDE_LLM.invoke([sys, HumanMessage(content=last_user.content)])
 
     logger.info(f"Current query route to: {res.content}")
     return {"route": res.content}
-
-
-def router(state: AgentState) -> str:
-    """route the query to different paths"""
-    return state["route"]
 
 
 def rewrite_node(state: AgentState) -> dict:
@@ -79,12 +72,20 @@ def rewrite_node(state: AgentState) -> dict:
 
     last_user = next((m for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), None)
     local_info = DB.get_local_info(user_id=state["user_id"], thread_id=state["thread_id"])
-    sys = SystemMessage(content=(f"""Expand this query to make it more reasonable and understandable base on the personal_info
-                                 [if no info provided then use normal logic]: {local_info}\n And here's the query: {last_user.content}"""))
+    if local_info:
+        obj_info, emo_info = local_info.get("obj_info"), local_info.get("emo_info")
+        info_text = f"\nHere's objective information: \n{obj_info} \n\nHere's emotional information: \n{emo_info}"
+    else:
+        info_text = "N/A"
+
+    sys = SystemMessage(content=("You are asked to rewrite the user's query to be more precise and actionable. "
+        "Base the rewrite on the provided personal_info if present; if absent, rely on normal reasoning.\n\n"
+        f"personal_info: {info_text}\n"
+        f"user_query: {last_user.content}"))
     
     res = SIDE_LLM.invoke([sys])
-    logger.info(f"Current query rewrited from: {last_user.content} \n\nTo: {res}")
-    return {"messages": [RemoveMessage(id=last_user.id), HumanMessage(content=res)]}
+    logger.info(f"Current query rewritten from: {last_user.content} \n\nTo: {res.content}")
+    return {"messages": [RemoveMessage(id=last_user.id), HumanMessage(content=res.content)]}
 
 
 def analyze_node(state: AgentState) -> dict:
@@ -100,7 +101,7 @@ def analyze_node(state: AgentState) -> dict:
     if not factors:
         from utils.search import advan_web_search
         factors = advan_web_search(query_text)
-        return Command(goto="analizer", update={"hitl_needed": factors})
+        return Command(goto="analyzer", update={"hitl_needed": factors})
     
     collected = list(state.get("hitl_collected") or [])
     rounds = int(state.get("hitl_rounds") or 0)
@@ -145,18 +146,18 @@ def analyze_node(state: AgentState) -> dict:
                 "hitl_needed": factors,
                 "hitl_rounds": rounds,
                 "messages": [RemoveMessage(id=last_user.id), 
-                             HumanMessage(content=updated_last_user),
+                             HumanMessage(content="\n".join(updated_last_user)),
                              AIMessage(content=("Info is enough, now proceed to planner node..."))],
             },
         )
     
     return Command(
-        goto="analizer",
+        goto="analyzer",
         update={
             "hitl_collected": collected,
             "hitl_needed": factors,
             "hitl_rounds": rounds,
-            "messages": [AIMessage(content=("Info is still not enough, now entering analizer node again..."))]
+            "messages": [AIMessage(content=("Info is still not enough, now entering analyzer node again..."))]
         },
     )
 
@@ -166,27 +167,33 @@ def planner_sys_node(state: AgentState) -> dict:
     from core.planner import Planner
     planner = Planner(state)
     res = planner.handle
-    return {"messages": [AIMessage(content=res.content)]}
+    res = f"Planner system activated successfully!"
+    return {"messages": [AIMessage(content=res)]}
 
 
 def record_node(state: AgentState) -> dict:
     """Record objective and emotional info to local_info table"""
     
-    recent_msgs = list(state["messages"])[-RECENT_K:]
-    joined = "\n".join([getattr(m, "content", "") for m in recent_msgs])
+    recent_msgs = list(m.content for m in state["messages"] if isinstance(m, HumanMessage) or isinstance(m, AIMessage))
+    joined = "\n".join(recent_msgs)
+    sys = SystemMessage(content=("Thoroughly analyze the conversation and produce EXACTLY two paragraphs:\n"
+                                "Paragraph 1: Objective information (facts, preferences, constraints).\n"
+                                "Paragraph 2: Emotional information (mindset, tone, concerns).\n"
+                                "Output format: two paragraphs separated by a single line containing exactly ###.\n\n"
+                                f"Conversation:\n{joined}"))
     
-    # Extract objective and emotional info (simplified)
-    obj_info = f"Objective: {joined[:100]}..."
-    emo_info = f"Emotional: neutral tone detected"
-    
-    # Get user_id and thread_id from state
+    res = SUMMARIZER.invoke([sys])
+    split_res = str(res.content).split("###")
+    if len(split_res) == 2:
+        obj_info, emo_info = split_res[0], split_res[1]
+    else:
+        logger.error(f"Wrong record_node summarization: {split_res}")
+
     user_id = state.get("user_id", 1)
     thread_id = state.get("thread_id", "default")
-    
-    # Update database
     DB.update_local_info(user_id, thread_id, obj_info, emo_info)
     
-    return {"messages": [HumanMessage(content="[Recorded] Information saved to database")]}
+    return {"messages": [AIMessage(content="[Recorded] Information saved to database")]}
 
 
 def should_summarize(state: AgentState) -> str:
@@ -217,15 +224,15 @@ def summarize_node(state: AgentState) -> dict:
 def llm_node(state: AgentState) -> dict:
     """direct llm response"""
 
-    sys = SystemMessage(content=("You are a consice, helpful assistant. Use the conversation summary to maintain continuity. "
+    sys = SystemMessage(content=("You are a concise, helpful assistant. Use the conversation summary to maintain continuity. "
                                  "Feel free to use web_search tool if you think the information you search is time-sensitive."
                                     "If user asking about past context that isn't in RECENT messages, use the summary to recall it. "))
     context: list[BaseMessage] = [sys]
     if state.get("summary"):
         context.append(SystemMessage(content=f"[Conversation summary]\n{state['summary']}"))
 
-    recent = list(state["messages"])[-RECENT_K:]
+    recent = list(state["messages"])
     context.extend([m for m in recent])
-    
-    res = LLM.invoke(context)
+    llm_with_tools = LLM.bind_tools(TOOLS)
+    res = llm_with_tools.invoke(context)
     return {"messages": [res]}

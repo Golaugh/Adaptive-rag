@@ -1,26 +1,59 @@
 
 
-import re
+import os
 import json
+import logging
+from tavily import TavilyClient
+from typing import Dict, Any
 from langchain_core.tools import tool
 
-EMAIL_RE = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
-PHONE_RE = re.compile(r"\+?\d[\d\s().-]{7,}")
-
+logger = logging.getLogger(__name__)
 
 # Tools
 @tool
 def web_search(query: str) -> str:
-    """this search_node use TAVILY_API_KEY to get info from the internet"""
-    return json.dumps({
-        "query": query,
-        "snippet": f"[Stub] Pretend web results about: {query}",
-        "source": "web_stub"
-    })
+    """Search the web with Tavily and return structured JSON for agents."""
+
+    api_key = os.getenv("TAVILY_API_KEY")
+    if not api_key:
+        logger.error("TAVILY_API_KEY not detected!")
+
+    client = TavilyClient(api_key=api_key)
+    params: Dict[str, Any] = {
+        "search_depth": "basic",
+        "topic": "general",
+        "include_answer": True,
+        "include_raw_content": False,
+        "max_results": 5,
+    }
+    res = client.search(query, **params)
+
+    results = [{
+        "title": it.get("title"),
+        "url": it.get("url"),
+        "content": it.get("content"),
+        "score": it.get("score"),
+        "favicon": it.get("favicon"),
+    } for it in res.get("results", [])]
+
+    out = {
+        "query": res.get("query", query),
+        "answer": res.get("answer"),
+        "results": results,
+        "citations": [r["url"] for r in results if r.get("url")],
+        "source": "tavily",
+        "response_time": res.get("response_time"),
+        "auto_parameters": res.get("auto_parameters"),
+        "request_id": res.get("request_id"),
+    }
+    return json.dumps(out, ensure_ascii=False)
 
 
 def advan_web_search(query: str) -> str:
-    """this search_node use TAVILY_API_KEY to get info from the internet"""
+    """using more fine-tuned methods to search necessary and related factors across all platforms for the query"""
+
+    from zhihu_search import Zhihu
+    from reddit_search import Reddit
     return json.dumps({
         "query": query,
         "snippet": f"[Stub] Pretend web results about: {query}",
