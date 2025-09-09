@@ -1,0 +1,31 @@
+
+
+# 建议使用 requirements-lock.txt 来进行环境安装
+# suggest using requirements-lock.txt when reproducing
+# Graph Definition
+langchain>=0.3
+langchain-core>=0.3
+langchain-community>=0.3
+langchain-experimental==0.3.4
+langgraph>=0.6
+langgraph-prebuilt>=0.6
+
+# Retrieve & Model
+rank_bm25==0.2.2
+openai>=1.97
+huggingface-hub>=0.34
+sentence-transformers==5.1.0
+tiktoken>=0.9
+
+# DB
+chromadb>=1.0
+sqlite-vec>=0.1
+SQLAlchemy>=2.0
+mysql-connector-python>=9.4
+
+# Env
+python-dotenv>=1.1
+
+# API framework (TBD)
+# fastapi>=0.116,<0.117
+# uvicorn>=0.35,<0.36
