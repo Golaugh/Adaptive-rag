@@ -1,9 +1,21 @@
-.venv/
-.env
+
 
 __pycache__/
 *.py[cod]
+*$py.class
 *.pyo
+*.pyd
+
+.venv/
+.env
 
 *.log
 *.tmp
+.cache/
+
+retriever.db/
+*.sqlite3
+*.db
+*.db*
+*.db-journal
+*.ingested
